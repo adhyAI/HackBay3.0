@@ -1,0 +1,95 @@
+{
+	"components": [
+		{
+			"id": "webhook_1",
+			"provider": "webhook",
+			"config": { "hideForm": true, "mode": "Source", "parameters": {}, "type": "webhook" }
+		},
+		{
+			"id": "llm_nebius_1",
+			"provider": "llm_nebius",
+			"config": {
+				"profile": "llama-3-3-70b",
+				"llama-3-3-70b": { "apikey": "${ROCKETRIDE_NEBIUS_KEY}" }
+			},
+			"control": [
+				{ "classType": "llm", "from": "agent_rocketride_1" },
+				{ "classType": "llm", "from": "db_neo4j_1" }
+			]
+		},
+		{
+			"id": "memory_internal_1",
+			"provider": "memory_internal",
+			"config": { "type": "memory_internal" },
+			"control": [{ "classType": "memory", "from": "agent_rocketride_1" }]
+		},
+		{
+			"id": "tool_daytona_1",
+			"provider": "tool_daytona",
+			"config": {
+				"type": "tool_daytona",
+				"apikey": "${ROCKETRIDE_DAYTONA_KEY}",
+				"api_url": "",
+				"language": "typescript",
+				"auto_stop_minutes": 5,
+				"exec_timeout_secs": 120,
+				"max_output_chars": 50000
+			},
+			"control": [{ "classType": "tool", "from": "agent_rocketride_1" }]
+		},
+		{
+			"id": "tool_butterbase_1",
+			"provider": "tool_butterbase",
+			"config": {
+				"type": "tool_butterbase",
+				"bearer": "${ROCKETRIDE_BUTTERBASE_KEY}",
+				"endpoint": "https://api.butterbase.ai/mcp",
+				"serverName": "butterbase"
+			},
+			"control": [{ "classType": "tool", "from": "agent_rocketride_1" }]
+		},
+		{
+			"id": "db_neo4j_1",
+			"provider": "db_neo4j",
+			"config": {
+				"profile": "default",
+				"default": {
+					"db_description": "Organizational memory of past supply-chain RFQs: (:Customer)-[:SUBMITTED]->(:HistoricalRFQ {part_description, quantity, submitted_at})-[:RESULTED_IN]->(:Quote {vendor_name, vendor_landing_cost, markup_percent, final_price, quoted_at}). Used to find similar historical RFQs and quotes for a new incoming request.",
+					"uri": "${ROCKETRIDE_NEO4J_URI}",
+					"auth_method": "userpass",
+					"user": "${ROCKETRIDE_NEO4J_USER}",
+					"password": "${ROCKETRIDE_NEO4J_PASSWORD}",
+					"database": "neo4j",
+					"max_attempts": 5,
+					"allow_execute": false
+				}
+			},
+			"control": [{ "classType": "tool", "from": "agent_rocketride_1" }]
+		},
+		{
+			"id": "agent_rocketride_1",
+			"provider": "agent_rocketride",
+			"config": {
+				"agent_description": "RocketRide RFQ processing agent: takes an incoming RFQ (customer, part description, quantity, diagram notes) and produces a costed, history-informed record.",
+				"instructions": [
+					"You receive a JSON payload describing an inbound RFQ: tenant_id, customer_name, customer_email, part_description, quantity, diagram_note.",
+					"Step 1: Use the Daytona tool to run a short script that estimates a materials/labor cost breakdown for this part_description and quantity (unit material cost, waste factor, total material cost, labor hours estimate).",
+					"Step 2: Use the Neo4j tool to find similar historical RFQs and their final quoted prices, to sanity-check the estimate.",
+					"Step 3: Use the Butterbase tool to update the matching row in the rfq_cards table (matched by tenant_id + customer_email + part_description) with the daytona_output (as JSON) and similar_rfqs (as JSON, wrapped as {\"items\": [...]}) fields you computed. IMPORTANT: Butterbase jsonb columns reject a top-level JSON array — always wrap arrays in an object like {\"items\": [...]} before writing.",
+					"Respond with a short JSON summary of what you found and wrote: { unitMaterialCost, totalMaterialCost, laborHoursEstimate, similarRfqCount }."
+				],
+				"max_waves": 10
+			},
+			"input": [{ "lane": "questions", "from": "webhook_1" }]
+		},
+		{
+			"id": "response_answers_1",
+			"provider": "response_answers",
+			"config": { "laneName": "answers" },
+			"input": [{ "lane": "answers", "from": "agent_rocketride_1" }]
+		}
+	],
+	"project_id": "b7e85222-c5ca-4d78-8a26-9b14f558ae05",
+	"viewport": { "x": 0, "y": 0, "zoom": 1 },
+	"version": 1
+}

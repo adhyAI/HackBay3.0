@@ -1,0 +1,31 @@
+{
+  "name": "rfq-risk-navigator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-tenant Supply Chain RFQ Risk Navigator - HackwithBay 3.0",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@daytona/sdk": "^0.194.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "neo4j-driver": "^5.24.0",
+    "node-fetch": "^3.3.2",
+    "rocketride": "^1.3.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "archiver": "^6.0.2",
+    "playwright": "^1.61.1",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}

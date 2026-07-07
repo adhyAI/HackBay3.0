@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.log
+.rocketride/
+
+# build outputs / deploy artifacts
+dist-static/
+.output/
+.wrangler/
+.tanstack/
+*.zip
+scripts/*-screenshot.png

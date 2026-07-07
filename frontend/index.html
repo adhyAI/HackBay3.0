@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>RFQ Risk Navigator — Pipeline</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem 2rem;
+      background: #0f1117; color: #e6e6e6;
+    }
+    h1 { font-size: 1.3rem; margin: 0 0 0.15rem 0; }
+    .sub { color: #8a8f98; margin: 0 0 1rem 0; font-size: 0.9rem; }
+    .toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+    .tenant-toggle { display: flex; gap: 0.5rem; }
+    .tenant-toggle button, .toolbar button {
+      padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid #333;
+      background: #1a1d24; color: #e6e6e6; cursor: pointer; font-size: 0.9rem;
+    }
+    .tenant-toggle button.active { background: #3b82f6; border-color: #3b82f6; color: white; }
+
+    .board { display: flex; gap: 0.9rem; overflow-x: auto; padding-bottom: 1rem; }
+    .column {
+      flex: 0 0 260px; background: #14161c; border: 1px solid #23262e; border-radius: 8px;
+      display: flex; flex-direction: column; min-height: 200px;
+    }
+    .column-header {
+      padding: 0.7rem 0.8rem; font-size: 0.85rem; font-weight: 600; color: #9fb4ff;
+      border-bottom: 1px solid #23262e; display: flex; justify-content: space-between;
+    }
+    .column-body { padding: 0.6rem; flex: 1; min-height: 120px; }
+    .column-body.drag-over { background: #1b2130; }
+
+    .card {
+      background: #1a1d24; border: 1px solid #2a2d35; border-radius: 6px; padding: 0.6rem 0.7rem;
+      margin-bottom: 0.6rem; cursor: grab; font-size: 0.82rem;
+    }
+    .card:active { cursor: grabbing; }
+    .card .customer { font-weight: 600; margin-bottom: 0.15rem; }
+    .card .subject { color: #b8bcc4; margin-bottom: 0.3rem; }
+    .card .meta { color: #7a7f88; font-size: 0.75rem; }
+    .card .badge { display: inline-block; margin-top: 0.35rem; margin-right: 0.25rem; font-size: 0.72rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: #263044; color: #9fb4ff; }
+    .card .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid #444; border-top-color: #9fb4ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-col { color: #555; font-size: 0.78rem; font-style: italic; padding: 0.4rem; }
+    .banner { padding: 0.5rem 0.8rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; }
+    .banner.error { background: #3a1a1a; color: #ff9b9b; border: 1px solid #6b2c2c; }
+
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      align-items: center; justify-content: center; z-index: 10;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #14161c; border: 1px solid #2a2d35; border-radius: 8px; padding: 1.25rem;
+      width: 480px; max-width: 90vw; max-height: 85vh; overflow-y: auto;
+    }
+    .modal h2 { margin-top: 0; font-size: 1.05rem; }
+    .modal .field { margin-bottom: 0.7rem; font-size: 0.85rem; }
+    .modal .field label { display: block; color: #8a8f98; font-size: 0.72rem; margin-bottom: 0.15rem; text-transform: uppercase; }
+    .modal .field .value { white-space: pre-wrap; }
+    .modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+    .modal-actions button {
+      padding: 0.5rem 0.8rem; border-radius: 6px; border: 1px solid #3b82f6;
+      background: #3b82f6; color: white; cursor: pointer; font-size: 0.82rem;
+    }
+    .modal-actions button.secondary { background: transparent; color: #3b82f6; }
+    .modal-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .close-btn { float: right; background: none; border: none; color: #8a8f98; font-size: 1.1rem; cursor: pointer; }
+    pre.json { background: #0f1117; padding: 0.5rem; border-radius: 4px; font-size: 0.72rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>RFQ Risk Navigator — Pipeline</h1>
+  <p class="sub">Human-in-the-loop Kanban: drag cards through the stages. Backend runs entirely on Butterbase functions (Nebius parsing, Daytona sandbox, Neo4j history).</p>
+
+  <div class="toolbar">
+    <div class="tenant-toggle">
+      <button id="btn-alpha" onclick="setTenant('alpha')">Alpha Tech</button>
+      <button id="btn-beta" onclick="setTenant('beta')">Beta Aero</button>
+    </div>
+    <button onclick="simulateIncoming()">Simulate incoming RFQ</button>
+    <button onclick="loadCards()">Refresh</button>
+  </div>
+
+  <div id="banner"></div>
+  <div class="board" id="board"></div>
+
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <script>
+    const API_BASE = "https://api.butterbase.ai/v1/app_3hzl91g7eemj/fn";
+
+    const TENANTS = {
+      alpha: { id: "9e7bd1b2-61b5-43f7-9679-8ac8339d0981", label: "Alpha Tech" },
+      beta: { id: "272bbe54-e6c2-4653-ab3c-94fa1d60d1c0", label: "Beta Aero" },
+    };
+
+    const STAGES = [
+      { key: "received", label: "Received" },
+      { key: "sales_review", label: "Sales Review" },
+      { key: "engineering_review", label: "Engineering Review" },
+      { key: "vendor_quote", label: "Vendor Quote" },
+      { key: "customer_sent", label: "Customer Sent" },
+    ];
+
+    const SIM_CUSTOMERS = ["Sable Robotics", "Union Forge Industries", "Kestrel Dynamics", "Vantage Fluid Systems"];
+    const SIM_PARTS = [
+      { desc: "Stainless steel gearbox housing", note: "Wall thickness 4mm, IP67 rated" },
+      { desc: "Anodized aluminum heat exchanger plate", note: "0.5mm fin spacing, brazed assembly" },
+      { desc: "Composite drone airframe bracket", note: "Carbon fiber layup, drawing rev B" },
+      { desc: "Precision ball screw assembly", note: "C5 accuracy grade, 25mm lead" },
+    ];
+
+    let currentTenant = "alpha";
+    let cards = [];
+    let movingId = null;
+
+    function tenantId() {
+      return TENANTS[currentTenant].id;
+    }
+
+    function withTenant(url) {
+      const u = new URL(url);
+      u.searchParams.set("tenant_id", tenantId());
+      return u.toString();
+    }
+
+    function showError(msg) {
+      document.getElementById("banner").innerHTML = msg ? `<div class="banner error">${msg}</div>` : "";
+    }
+
+    async function setTenant(key) {
+      currentTenant = key;
+      document.getElementById("btn-alpha").classList.toggle("active", key === "alpha");
+      document.getElementById("btn-beta").classList.toggle("active", key === "beta");
+      closeModal();
+      await loadCards();
+    }
+
+    async function loadCards() {
+      try {
+        const res = await fetch(withTenant(`${API_BASE}/pipeline-cards`));
+        cards = await res.json();
+        showError(null);
+        renderBoard();
+      } catch (err) {
+        showError("Failed to load cards: " + err.message);
+      }
+    }
+
+    function renderBoard() {
+      const board = document.getElementById("board");
+      board.innerHTML = "";
+
+      for (const stage of STAGES) {
+        const column = document.createElement("div");
+        column.className = "column";
+
+        const stageCards = cards.filter((c) => c.stage === stage.key);
+
+        const header = document.createElement("div");
+        header.className = "column-header";
+        header.innerHTML = `<span>${stage.label}</span><span>${stageCards.length}</span>`;
+        column.appendChild(header);
+
+        const body = document.createElement("div");
+        body.className = "column-body";
+        body.addEventListener("dragover", (e) => { e.preventDefault(); body.classList.add("drag-over"); });
+        body.addEventListener("dragleave", () => body.classList.remove("drag-over"));
+        body.addEventListener("drop", async (e) => {
+          e.preventDefault();
+          body.classList.remove("drag-over");
+          const cardId = e.dataTransfer.getData("text/card-id");
+          if (cardId) await moveCard(cardId, stage.key);
+        });
+
+        if (stageCards.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty-col";
+          empty.textContent = "No cards";
+          body.appendChild(empty);
+        }
+
+        for (const card of stageCards) body.appendChild(renderCard(card));
+
+        column.appendChild(body);
+        board.appendChild(column);
+      }
+    }
+
+    function renderCard(card) {
+      const el = document.createElement("div");
+      el.className = "card";
+      el.draggable = true;
+      el.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/card-id", card.id));
+      el.addEventListener("click", () => openModal(card));
+
+      const badges = [];
+      if (card.daytona_output) badges.push("Daytona ✓");
+      if (card.similar_rfqs) badges.push(`History (${card.similar_rfqs.items?.length ?? 0})`);
+      if (card.vendor_landing_cost != null) badges.push("Vendor ✓");
+      if (card.final_quote != null) badges.push(`Final $${Number(card.final_quote).toFixed(2)}`);
+
+      el.innerHTML = `
+        <div class="customer">${card.customer_name} ${card.id === movingId ? '<span class="spinner"></span>' : ""}</div>
+        <div class="subject">${card.email_subject ?? ""}</div>
+        <div class="meta">${card.part_description ?? "not parsed"} · qty ${card.quantity ?? "—"}</div>
+        ${badges.map((b) => `<span class="badge">${b}</span>`).join(" ")}
+      `;
+      return el;
+    }
+
+    async function moveCard(cardId, stage) {
+      movingId = cardId;
+      renderBoard();
+      try {
+        const res = await fetch(withTenant(`${API_BASE}/pipeline-action`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "move_stage", id: cardId, stage }),
+        });
+        const updated = await res.json();
+        if (!res.ok) { showError(updated.error ?? "Move failed"); movingId = null; renderBoard(); return; }
+        cards = cards.map((c) => (c.id === cardId ? updated : c));
+        showError(null);
+      } catch (err) {
+        showError("Move failed: " + err.message);
+      }
+      movingId = null;
+      renderBoard();
+    }
+
+    function closeModal() {
+      document.getElementById("modalOverlay").classList.remove("open");
+    }
+
+    function openModal(card) {
+      const overlay = document.getElementById("modalOverlay");
+      const modal = document.getElementById("modal");
+
+      modal.innerHTML = `
+        <button class="close-btn" onclick="closeModal()">✕</button>
+        <h2>${card.customer_name}</h2>
+        <div class="field"><label>Email</label><div class="value">${card.customer_email}</div></div>
+        <div class="field"><label>Subject</label><div class="value">${card.email_subject ?? ""}</div></div>
+        <div class="field"><label>Email Body</label><div class="value">${card.email_body ?? ""}</div></div>
+        <div class="field"><label>Part / Quantity</label><div class="value">${card.part_description ?? "not parsed yet"} — qty ${card.quantity ?? "—"}</div></div>
+        <div class="field"><label>Diagram Note</label><div class="value">${card.diagram_note ?? ""}</div></div>
+        ${card.daytona_output ? `<div class="field"><label>Daytona Sandbox Output</label><pre class="json">${JSON.stringify(card.daytona_output, null, 2)}</pre></div>` : ""}
+        ${card.similar_rfqs ? `<div class="field"><label>Similar Past RFQs (Neo4j)</label><pre class="json">${JSON.stringify(card.similar_rfqs.items ?? [], null, 2)}</pre></div>` : ""}
+        ${card.vendor_landing_cost != null ? `<div class="field"><label>Vendor Quote</label><div class="value">${card.vendor_name} — $${Number(card.vendor_landing_cost).toFixed(2)} landing cost</div></div>` : ""}
+        ${card.final_quote != null ? `<div class="field"><label>Final Quote to Customer</label><div class="value">$${Number(card.final_quote).toFixed(2)} (markup ${card.markup_percent}%)</div></div>` : ""}
+        <div class="modal-actions">
+          <button onclick="runAction('${card.id}', 'parse')">Parse Email (Nebius)</button>
+          <button onclick="runAction('${card.id}', 'daytona_run')" ${!card.part_description ? "disabled" : ""}>Run Daytona Sandbox</button>
+          <button class="secondary" onclick="runAction('${card.id}', 'similar_rfqs')" ${!card.part_description ? "disabled" : ""}>Find Similar RFQs</button>
+          <button class="secondary" onclick="runAction('${card.id}', 'vendor_quote')">Get Vendor Quote</button>
+          <button onclick="runAction('${card.id}', 'finalize')" ${card.vendor_landing_cost == null ? "disabled" : ""}>Finalize & Send</button>
+        </div>
+      `;
+      overlay.classList.add("open");
+    }
+
+    async function runAction(cardId, action) {
+      try {
+        const res = await fetch(withTenant(`${API_BASE}/pipeline-action`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, id: cardId }),
+        });
+        const updated = await res.json();
+        if (!res.ok) { alert(updated.error ?? "Action failed"); return; }
+        cards = cards.map((c) => (c.id === cardId ? updated : c));
+        renderBoard();
+        openModal(updated);
+      } catch (err) {
+        alert("Action failed: " + err.message);
+      }
+    }
+
+    async function simulateIncoming() {
+      const customer = SIM_CUSTOMERS[Math.floor(Math.random() * SIM_CUSTOMERS.length)];
+      const part = SIM_PARTS[Math.floor(Math.random() * SIM_PARTS.length)];
+      const quantity = [25, 50, 100, 250, 500][Math.floor(Math.random() * 5)];
+      const domain = customer.toLowerCase().replace(/\s+/g, "");
+
+      const payload = {
+        customer_name: customer,
+        customer_email: `procurement@${domain}.com`,
+        email_subject: `RFQ: ${part.desc} x ${quantity}`,
+        email_body: `Hi team,\n\nPlease find attached our RFQ for ${quantity} units of the ${part.desc}.\n${part.note}.\nLet us know pricing and lead time.\n\nThanks,\n${customer}`,
+        pdf_url: `attachments/${domain}-rfq-${Date.now()}.pdf`,
+      };
+
+      try {
+        await fetch(withTenant(`${API_BASE}/pipeline-ingest`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        await loadCards();
+      } catch (err) {
+        showError("Simulate failed: " + err.message);
+      }
+    }
+
+    document.getElementById("modalOverlay").addEventListener("click", (e) => {
+      if (e.target.id === "modalOverlay") closeModal();
+    });
+
+    setTenant("alpha");
+  </script>
+</body>
+</html>
