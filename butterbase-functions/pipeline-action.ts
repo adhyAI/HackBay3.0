@@ -8,6 +8,26 @@ const STAGES = ["received", "sales_review", "engineering_review", "vendor_quote"
 const VENDOR_NAMES = ["Pacific Rim Fabrication", "Titan Metal Supply", "Ironclad Machining"];
 const MODEL = "meta-llama/Llama-3.3-70B-Instruct";
 
+/**
+ * Daytona's own infra occasionally 502s spinning up a fresh sandbox on a cold
+ * start (~30s before it gives up) — a retry almost always succeeds against a
+ * now-warm backend. Retries only on 5xx/network failure, not on 4xx (bad request).
+ */
+async function fetchWithRetry(url, options, attempts = 2) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok || (res.status >= 400 && res.status < 500)) return res;
+      lastErr = new Error(`${url} responded ${res.status}: ${await res.text()}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+  }
+  throw lastErr;
+}
+
 async function parseRfqEmail(env, emailSubject, emailBody) {
   const prompt = `Extract structured fields from this RFQ (request for quote) email. Respond with ONLY a JSON object, no other text, in the exact shape:
 {"part_description": string, "quantity": number, "diagram_note": string}
@@ -44,7 +64,7 @@ async function runNumberCrunch(env, partDescription, quantity, diagramNote) {
   const apiUrl = env.DAYTONA_API_URL || "https://app.daytona.io/api";
   const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${env.DAYTONA_API_KEY}` };
 
-  const createRes = await fetch(`${apiUrl}/sandbox`, {
+  const createRes = await fetchWithRetry(`${apiUrl}/sandbox`, {
     method: "POST",
     headers: authHeaders,
     body: JSON.stringify({ language: "typescript" }),
@@ -64,7 +84,7 @@ async function runNumberCrunch(env, partDescription, quantity, diagramNote) {
       console.log(JSON.stringify({ unitMaterialCost, wasteFactor, totalMaterialCost, laborHoursEstimate }));
     `;
 
-    const runRes = await fetch(`https://proxy.app.daytona.io/toolbox/${sandboxId}/process/code-run`, {
+    const runRes = await fetchWithRetry(`https://proxy.app.daytona.io/toolbox/${sandboxId}/process/code-run`, {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify({ code, language: "typescript", timeout: 30 }),
@@ -153,8 +173,9 @@ function jsonResponse(data, status = 200) {
 }
 
 export async function handler(req, ctx) {
-  const tenantId = req.headers.get("x-tenant-id");
-  if (!tenantId) return jsonResponse({ error: "Missing x-tenant-id header" }, 400);
+  const url = new URL(req.url);
+  const tenantId = url.searchParams.get("tenant_id");
+  if (!tenantId) return jsonResponse({ error: "Missing tenant_id query param" }, 400);
 
   let body;
   try {

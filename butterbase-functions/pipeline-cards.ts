@@ -1,7 +1,8 @@
 export async function handler(req: Request, ctx: any): Promise<Response> {
-  const tenantId = req.headers.get("x-tenant-id");
+  const url = new URL(req.url);
+  const tenantId = url.searchParams.get("tenant_id");
   if (!tenantId) {
-    return new Response(JSON.stringify({ error: "Missing x-tenant-id header" }), {
+    return new Response(JSON.stringify({ error: "Missing tenant_id query param" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
